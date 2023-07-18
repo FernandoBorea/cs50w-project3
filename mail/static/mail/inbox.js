@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', function() {
   document.querySelector('#inbox').addEventListener('click', () => load_mailbox('inbox'));
   document.querySelector('#sent').addEventListener('click', () => load_mailbox('sent'));
   document.querySelector('#archived').addEventListener('click', () => load_mailbox('archive'));
-  document.querySelector('#compose').addEventListener('click', compose_email);
+  document.querySelector('#compose').addEventListener('click', () => compose_email(false));
 
   // Add event listener for email form submission
   document.querySelector('#compose-form').onsubmit = send_email;
@@ -13,17 +13,28 @@ document.addEventListener('DOMContentLoaded', function() {
   load_mailbox('inbox');
 });
 
-function compose_email() {
+function compose_email(use_prefill, prefill) {
 
   // Show compose view and hide other views
   document.querySelector('#emails-view').style.display = 'none';
   document.querySelector('#email-view').style.display = 'none';
   document.querySelector('#compose-view').style.display = 'block';
 
-  // Clear out composition fields
+  // Clear out composition fields or prefill values
+  if (!use_prefill) {
   document.querySelector('#compose-recipients').value = '';
   document.querySelector('#compose-subject').value = '';
   document.querySelector('#compose-body').value = '';
+  } else {
+    document.querySelector('#compose-recipients').value = prefill.recipients;
+
+    subject = prefill.subject;
+    subject = (subject.length < 3 || subject.slice(0, 4) !== "Re: ")? `Re: ${subject}` : subject;
+    document.querySelector('#compose-subject').value = subject;
+
+    body = `\n\nOn ${prefill.timestamp} ${prefill.sender} wrote:\n${prefill.body}`;
+    document.querySelector('#compose-body').value = body;
+  }
 }
 
 function load_mailbox(mailbox) {
@@ -37,7 +48,7 @@ function load_mailbox(mailbox) {
   document.querySelector('#emails-view').innerHTML = `<h3>${mailbox.charAt(0).toUpperCase() + mailbox.slice(1)}</h3>`;
 
   // Get emails
-  fetch('/emails/inbox')
+  fetch(`/emails/${mailbox}`)
   .then(response => response.json())
   .then(emails => {
     // Log emails to console
@@ -75,7 +86,7 @@ function load_mailbox(mailbox) {
       email_a_element.append(email_div_element);
 
       // Add event listener
-      email_a_element.addEventListener('click', () => show_email(email.id));
+      email_a_element.addEventListener('click', () => show_email(email.id, mailbox));
 
       // Append to email view
       document.querySelector('#emails-view').append(email_a_element);
@@ -110,12 +121,15 @@ function send_email () {
 
 }
 
-function show_email(email_id) {
+function show_email(email_id, mailbox) {
 
   // Show the email and hide other views
   document.querySelector('#emails-view').style.display = 'none';
   document.querySelector('#email-view').style.display = 'block';
   document.querySelector('#compose-view').style.display = 'none';
+
+  // Clear out HTML of previous email
+  document.querySelector('#email-view').innerHTML = '';
 
   // Get email
   fetch(`/emails/${email_id}`)
@@ -143,7 +157,7 @@ function show_email(email_id) {
     receiver_div = document.createElement('div');
     receiver_div.className = 'd-flex w-100';
 
-    receiver_title = document.createElement('h6');
+    receiver_title = document.createElement('p');
     receiver_title.className = 'font-weight-bold';
     receiver_title.innerHTML = 'To: &nbsp;';
 
@@ -163,7 +177,7 @@ function show_email(email_id) {
     subject_content.innerHTML = email.subject;
 
     timestamp = document.createElement('p');
-    timestamp.className = 'card-subtitle text-muted font-weight-bold';
+    timestamp.className = 'card-subtitle text-muted';
     timestamp.innerHTML = `On ${email.timestamp}`;
 
     // Build header
@@ -181,23 +195,95 @@ function show_email(email_id) {
     email_header.append(subject_div);
     email_header.append(timestamp);
 
+    // Archive button
+    if (mailbox != 'sent') {
+
+      // Prepare text
+      archive_text = email.archived? 'Move to inbox' : 'Move to archive';
+      
+      // Prepare elements
+      button = document.createElement('button');
+      button.className = 'btn btn-sm btn-outline-primary mt-2';
+      button.innerHTML = archive_text;
+
+      button.addEventListener('click', () => archiver(email));
+
+      // Add to header
+      email_header.append(button);
+    }
+
     // Body elements
     email_body = document.createElement('div');
     email_body.className = 'card-body';
 
     email_content = document.createElement('p');
     email_content.className = 'card-text';
-    email_content.innerHTML = email.body;
+    email_content.innerHTML = email.body.replace(new RegExp('\n', 'g'),'<br>');
 
     // Build body
     email_body.append(email_content)
+
+    // Card footer elements
+    footer_div = document.createElement('div');
+    footer_div.className = 'card-footer';
+
+    button = document.createElement('button');
+    button.className = 'btn btn-sm btn-primary mt-2';
+    button.innerHTML = 'Reply to this email';
+
+    prefill = {
+      recipients: email.sender,
+      subject: email.subject,
+      body: email.body,
+      timestamp: email.timestamp,
+      sender: email.sender
+    }
+
+    button.addEventListener('click', () => compose_email(true, prefill));
+
+    // Build footer
+    footer_div.append(button);
 
     // Build email card
     email_card = document.querySelector('#email-view');
     email_card.append(email_header);
     email_card.append(email_body);
+    email_card.append(footer_div);
+
+    // Mark email as read
+    fetch(`/emails/${email.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        read: true
+      })
+    });
+
   });
 
   // Prevent default behavior
   return false
+}
+
+function archiver(email) {
+
+  // Archive or unarchive email
+  if (!email.archived) {
+    fetch(`/emails/${email.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        archived: true
+      })
+    });
+  } else {
+    fetch(`/emails/${email.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        archived: false
+      })
+    });
+  }
+
+  // Load inbox
+  load_mailbox('inbox');
+  
 }
